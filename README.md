@@ -19,9 +19,33 @@ npm install
 npm run dev       # starts the dev server, prints a local URL
 ```
 
-No API keys are required — every external integration (LLM, Google Places, CMS
-pricing/quality data, RxNorm/DailyMed) runs against a deterministic local mock by
-default. See "Adapters" below for how to point them at a real backend later.
+No API keys are required to run the app — every external integration (LLM, Google
+Places, CMS pricing/quality data, RxNorm/DailyMed) falls back to a deterministic
+local mock automatically whenever a real backend/key isn't configured. The LLM
+adapter now always attempts a real backend call first (see "Adapters" below); the
+others still always use their mock.
+
+## Using the app
+
+Open the dev server URL in a browser and walk through the four stages shown in
+the progress bar at the top:
+
+1. **Symptoms** — describe what's going on in the chat window. CarePath asks
+   progressive follow-up questions until it has enough structured information to
+   assess you; you can end the conversation once "I'm done" becomes available.
+2. **Confirm** — review every symptom/fact it understood (reported / denied /
+   unknown) and correct anything before it's used for the assessment. Nothing
+   from the chat is used silently — you confirm it first.
+3. **Result** — see the resulting care level (e.g. Emergency, Urgent Care,
+   Primary Care) with a plain-language explanation, a routing hierarchy, and
+   nearby facility suggestions (when the case isn't an emergency).
+4. **Visit Summary** — generate a doctor-visit summary to print or bring to your
+   appointment, and optionally look up a medication.
+
+All data is stored locally in this browser (IndexedDB via Dexie) — nothing is
+sent anywhere except the single extraction call per chat message described
+below. Use the **My data** button in the bottom-right corner at any time to
+export everything as JSON or permanently delete it.
 
 ## Scripts
 
@@ -31,6 +55,7 @@ npm run build       # typecheck + production build
 npm run typecheck   # tsc project references, no emit
 npm run test        # run the test suite once
 npm run test:watch  # watch mode
+npm run check:no-secrets-in-build  # fails if dist/ contains an API key or server-only env var name
 npm run lint        # oxlint
 ```
 
@@ -49,28 +74,47 @@ src/
   data/         Dexie (IndexedDB) schema, case repository, export/clear controls
   state/        useCareFlow — orchestrates the end-to-end UI flow
   components/   React UI, organized by screen/feature
+
+api/            Vercel serverless functions — the only place OPENAI_API_KEY is read.
+                  llm/extract.ts is the deployed endpoint; _lib/ holds the request
+                  handler, OpenAI client, schema, and logging it's built from
+                  (tsconfig.api.json is this folder's separate TS project).
+scripts/        Repo maintenance scripts, e.g. checkNoSecretsInBuild.mjs.
 ```
 
 ## Adapters and API keys
 
 Every external dependency (LLM, Google Places, CMS data, medication lookups) sits
-behind a small adapter interface with a deterministic mock implementation, so the
-app runs fully offline with no keys configured. To point an adapter at a real
-backend proxy later (API keys must stay server-side — see
-[docs/CarePath_AI_Plan.md](docs/CarePath_AI_Plan.md) Section 12), set the
-corresponding env var in a `.env.local` file:
+behind a small adapter interface with a deterministic mock implementation. API keys
+never live in browser code — external services are only ever reached through a
+backend/serverless proxy (see [docs/CarePath_AI_Plan.md](docs/CarePath_AI_Plan.md)
+Section 12).
+
+**LLM extraction (implemented):** `src/adapters/llm/index.ts` always calls the
+backend at `/api/llm/extract` (a same-origin relative path by default — set the
+optional `VITE_API_BASE_URL` only if the frontend and backend are ever deployed to
+separate origins). Any failure — no backend deployed, missing server-side key,
+network error, timeout, or a malformed/invalid response — falls back to the
+deterministic offline mock automatically; the app never blocks or errors on a
+missing key. Care-level explanation intentionally stays a fixed, deterministic
+template (not an LLM call) — see `docs/CarePath_AI_Plan.md` Section 12 and
+`RemoteLlmAdapter.explainCareLevel`'s doc comment (`src/adapters/llm/remoteLlmAdapter.ts`)
+for why.
+
+To run the real backend locally (e.g. via `vercel dev`), create a `.env.local` with:
 
 ```
-VITE_LLM_BACKEND_URL=https://your-backend/api
-VITE_PLACES_BACKEND_URL=https://your-backend/api
-VITE_CMS_BACKEND_URL=https://your-backend/api
-VITE_MEDICATION_BACKEND_URL=https://your-backend/api
+OPENAI_API_KEY=sk-...           # server-only — never prefix with VITE_
+OPENAI_EXTRACTION_MODEL=...     # optional override; see api/_lib/openaiClient.ts
 ```
 
-Currently only the LLM adapter (`src/adapters/llm/index.ts`) actually reads its env
-var and falls back to the mock on any network failure; the others are wired for a
-real backend but still default to their mocks — swapping them in requires no
-changes to callers.
+Without `OPENAI_API_KEY` set, `/api/llm/extract` returns 503 and the app
+transparently uses the offline mock — this is expected, not an error.
+
+**Places / CMS / Medication (not yet implemented):** these adapters still always
+return their mock — no real backend or env var is wired up for them yet. Swapping
+them in later requires no changes to their callers, following the same pattern as
+the LLM adapter above.
 
 ## Safety architecture
 

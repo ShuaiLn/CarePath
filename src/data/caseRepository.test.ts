@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { db } from './db'
 import { createCase, saveCase, getCase, listCases, deleteCase } from './caseRepository'
 import { clearAllLocalData, exportAllDataAsJson } from './dataControls'
@@ -55,5 +55,18 @@ describe('data lifecycle controls', () => {
     const parsed = JSON.parse(json)
     expect(parsed.cases.some((c: { id: string }) => c.id === created.id)).toBe(true)
     expect(parsed.device).toMatch(/this browser/i)
+  })
+
+  it('exportAllDataAsJson never makes a network call — exported case data stays local unless the user explicitly shares the downloaded file', async () => {
+    await createCase()
+    const originalFetch = globalThis.fetch
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    try {
+      await exportAllDataAsJson()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

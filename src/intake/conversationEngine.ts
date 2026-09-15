@@ -1,4 +1,4 @@
-import type { IntakeRecord } from '../types/intake'
+import type { AssociatedSymptomId, AssociatedSymptoms, IntakeRecord } from '../types/intake'
 import type { IntakeQuestion, IntakeQuestionId } from './fieldChecklist'
 import { INTAKE_QUESTIONS, CRITICAL_SCREENING_IDS, SECONDARY_SCREENING_IDS } from './fieldChecklist'
 
@@ -75,3 +75,48 @@ export function mergeIntake(base: IntakeRecord, update: Partial<IntakeRecord>): 
 }
 
 export const MAX_CLARIFICATION_ATTEMPTS = 2
+
+function pickAssociatedSymptoms(intake: IntakeRecord, ids: readonly AssociatedSymptomId[]): Partial<IntakeRecord> {
+  const known: AssociatedSymptoms = {}
+  for (const id of ids) {
+    const value = intake.associatedSymptoms[id]
+    if (value !== undefined) known[id] = value
+  }
+  return Object.keys(known).length > 0 ? { associatedSymptoms: known } : {}
+}
+
+function pickScopeFlags(intake: IntakeRecord): Partial<IntakeRecord> {
+  const known: Partial<IntakeRecord> = {}
+  for (const key of SCOPE_CHECK_KEYS) {
+    const value = intake[key]
+    if (value !== undefined) (known as Record<string, unknown>)[key] = value
+  }
+  return known
+}
+
+/**
+ * Deterministically select the minimal slice of the running intake record
+ * relevant to interpreting the current message, instead of sending the
+ * full record to the LLM backend on every turn (data minimization — see
+ * docs plan Part 3 "Minimize what's sent to OpenAI further"). Most
+ * questions need no prior context at all; the narrow, enumerable
+ * exceptions are the multi-symptom screening/scope questions, where
+ * resolving an answer like "no, not anymore" benefits from knowing what's
+ * already been reported so a blanket "no" is never mistaken for a
+ * retraction of something already stated.
+ */
+export function selectRelevantContext(
+  questionId: IntakeQuestionId | 'initial',
+  currentIntake: IntakeRecord,
+): Partial<IntakeRecord> {
+  switch (questionId) {
+    case 'screeningSymptoms':
+      return pickAssociatedSymptoms(currentIntake, CRITICAL_SCREENING_IDS)
+    case 'moreScreeningSymptoms':
+      return pickAssociatedSymptoms(currentIntake, [...CRITICAL_SCREENING_IDS, ...SECONDARY_SCREENING_IDS])
+    case 'scopeCheck':
+      return pickScopeFlags(currentIntake)
+    default:
+      return {}
+  }
+}

@@ -1,4 +1,4 @@
-import type { LlmAdapter, ExtractionInput, ExtractionResult } from './types'
+import type { LlmAdapter, Clarification, ExtractionContext, ExtractionResult } from './types'
 import type { IntakeRecord } from '../../types/intake'
 import { makeProvenance } from '../../types/provenance'
 import type { CareLevelResult } from '../../types/careLevel'
@@ -35,8 +35,8 @@ import { CRITICAL_SCREENING_IDS, SECONDARY_SCREENING_IDS } from '../../intake/fi
 export class MockLlmAdapter implements LlmAdapter {
   readonly name = 'mock-rule-based'
 
-  async extractFromMessage(input: ExtractionInput): Promise<ExtractionResult> {
-    const { message, questionId } = input
+  async extractFromMessage(input: ExtractionContext): Promise<ExtractionResult> {
+    const { message, questionId, relevantExistingFields } = input
     const updatedIntake: Partial<IntakeRecord> = {}
 
     // Always-on safety net: scan every message for red-flag / scope
@@ -59,7 +59,7 @@ export class MockLlmAdapter implements LlmAdapter {
     if (scopeHits.postOperative) updatedIntake.postOperativeComplicationReported = makeProvenance(scopeHits.postOperative, 'patient_reported')
     if (scopeHits.immunocompromised) updatedIntake.immunocompromisedReported = makeProvenance(scopeHits.immunocompromised, 'patient_reported')
 
-    let needsClarification: string | null = null
+    let clarification: Clarification | null = null
 
     switch (questionId) {
       case 'initial': {
@@ -85,8 +85,7 @@ export class MockLlmAdapter implements LlmAdapter {
         if (onsetHours !== null) {
           updatedIntake.onsetHours = makeProvenance(onsetHours, 'patient_reported')
         } else if (!isBlanketNo(message) && message.trim().length > 0) {
-          needsClarification =
-            "I'm not sure I understood exactly when this started — can you confirm roughly how long ago (e.g. \"3 days ago\" or \"2 hours ago\")?"
+          clarification = { field: 'onsetHours', reason: 'unparseable' }
         }
         break
       }
@@ -95,8 +94,7 @@ export class MockLlmAdapter implements LlmAdapter {
         if (severity !== null) {
           updatedIntake.severity = makeProvenance(severity, 'patient_reported')
         } else {
-          needsClarification =
-            "I'm not sure I understood the severity — can you confirm with a number from 0 (none) to 10 (worst pain imaginable)?"
+          clarification = { field: 'severity', reason: 'unparseable' }
         }
         break
       }
@@ -105,8 +103,7 @@ export class MockLlmAdapter implements LlmAdapter {
         if (trend) {
           updatedIntake.trend = makeProvenance(trend, 'patient_reported')
         } else {
-          needsClarification =
-            "I'm not sure I understood — can you confirm if it's getting better, staying the same, or getting worse?"
+          clarification = { field: 'trend', reason: 'unparseable' }
         }
         break
       }
@@ -121,13 +118,13 @@ export class MockLlmAdapter implements LlmAdapter {
             // mentioned in the patient's initial free-text message) — an
             // apparent later contradiction must not erase an earlier
             // positive red flag.
-            const alreadyKnown = input.currentIntake.associatedSymptoms[id] !== undefined || updatedIntake.associatedSymptoms[id] !== undefined
+            const alreadyKnown = relevantExistingFields.associatedSymptoms?.[id] !== undefined || updatedIntake.associatedSymptoms[id] !== undefined
             if (!alreadyKnown) {
               updatedIntake.associatedSymptoms[id] = makeProvenance('denied', 'patient_reported')
             }
           }
         } else if (isBlanketYesOnly(message)) {
-          needsClarification = 'Which of these are you experiencing — can you tell me which one(s)?'
+          clarification = { field: questionId, reason: 'multiple_values' }
         } else {
           // Positive keyword hits were already merged above via redFlagHits.
           // Anything not explicitly mentioned stays "unknown" rather than
@@ -140,7 +137,7 @@ export class MockLlmAdapter implements LlmAdapter {
         if (age !== null) {
           updatedIntake.age = makeProvenance(age, 'patient_reported')
         } else if (!isUnsure(message)) {
-          needsClarification = "I'm not sure I caught your age — can you confirm with a number?"
+          clarification = { field: 'age', reason: 'unparseable' }
         }
         break
       }
@@ -167,7 +164,7 @@ export class MockLlmAdapter implements LlmAdapter {
           for (const key of scopeKeys) {
             // Same rule as screening symptoms: a blanket "no" here must never
             // overwrite something already explicitly reported earlier.
-            const alreadyKnown = input.currentIntake[key] !== undefined || updatedIntake[key] !== undefined
+            const alreadyKnown = relevantExistingFields[key] !== undefined || updatedIntake[key] !== undefined
             if (!alreadyKnown) {
               updatedIntake[key] = makeProvenance('denied', 'patient_reported')
             }
@@ -191,7 +188,7 @@ export class MockLlmAdapter implements LlmAdapter {
       }
     }
 
-    return { updatedIntake, needsClarification }
+    return { updatedIntake, clarification, extractionMode: 'local-fallback' }
   }
 
   async explainCareLevel(result: CareLevelResult): Promise<string> {

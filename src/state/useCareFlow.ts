@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatMessage, IntakeRecord } from '../types/intake'
 import { createEmptyIntakeRecord } from '../types/intake'
 import type { IntakeQuestionId } from '../intake/fieldChecklist'
-import { pickNextQuestion, mergeIntake, MAX_CLARIFICATION_ATTEMPTS } from '../intake/conversationEngine'
+import { pickNextQuestion, mergeIntake, selectRelevantContext, MAX_CLARIFICATION_ATTEMPTS } from '../intake/conversationEngine'
+import { resolveClarificationText } from '../intake/clarificationTemplates'
 import { getLlmAdapter } from '../adapters/llm'
 import { assessCareLevel } from '../engines/careLevelEngine'
 import { routeCare } from '../engines/careRoutingEngine'
@@ -45,6 +46,7 @@ export function useCareFlow() {
   const [isThinking, setIsThinking] = useState(false)
   const [pendingQuestionId, setPendingQuestionId] = useState<IntakeQuestionId | 'initial'>('initial')
   const [readyForConfirmation, setReadyForConfirmation] = useState(false)
+  const [lastExtractionMode, setLastExtractionMode] = useState<'remote' | 'local-fallback' | null>(null)
 
   const askedIdsRef = useRef<Set<IntakeQuestionId>>(new Set())
   const clarificationAttemptsRef = useRef<Record<string, number>>({})
@@ -90,17 +92,21 @@ export function useCareFlow() {
       const extraction = await llm.current.extractFromMessage({
         message: text,
         questionId: pendingQuestionId,
-        currentIntake: intake,
+        relevantExistingFields: selectRelevantContext(pendingQuestionId, intake),
       })
+      setLastExtractionMode(extraction.extractionMode)
+      if (extraction.extractionMode === 'local-fallback') {
+        console.warn('[useCareFlow] extraction fell back to the offline mock this turn')
+      }
 
       const mergedIntake = mergeIntake(intake, extraction.updatedIntake)
       setIntake(mergedIntake)
 
-      if (extraction.needsClarification) {
+      if (extraction.clarification) {
         const attempts = (clarificationAttemptsRef.current[pendingQuestionId] ?? 0) + 1
         clarificationAttemptsRef.current[pendingQuestionId] = attempts
         if (attempts <= MAX_CLARIFICATION_ATTEMPTS) {
-          workingMessages = addMessage(workingMessages, 'assistant', extraction.needsClarification)
+          workingMessages = addMessage(workingMessages, 'assistant', resolveClarificationText(extraction.clarification))
           setMessages(workingMessages)
           setIsThinking(false)
           await persist({ conversation: workingMessages, intake: mergedIntake })
@@ -185,6 +191,7 @@ export function useCareFlow() {
     intake,
     isThinking,
     readyForConfirmation,
+    lastExtractionMode,
     careLevel,
     careRouting,
     careLevelExplanation,
