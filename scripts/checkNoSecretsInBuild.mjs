@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// Fails the build if the production client bundle (dist/) contains an
-// OpenAI-shaped API key literal or the server-only env var name. Run after
-// `npm run build`. See docs plan Part 8.5 — this is the CI gate for "API
-// keys never reach the client"; wire it into CI once this repo has one.
+// Fails the build if the production client bundle (dist/) contains a
+// secret-shaped literal or one of the server-only env var names CarePath
+// has used historically. CarePath is now a backend-less static SPA with no
+// server-side secrets of its own (the local Ollama daemon needs no API
+// key) — these patterns are kept as regression guards against ever
+// reintroducing a cloud-provider key, not because any are expected today.
+// Run after `npm run build`. Wire into CI once this repo has one.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 

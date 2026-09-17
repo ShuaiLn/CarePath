@@ -6,11 +6,15 @@ export type { CmsAdapter } from './types'
 let cached: CmsAdapter | null = null
 
 /**
- * Real CMS integration would go through a backend proxy (see
- * docs/CarePath_AI_Plan.md Section 12); no key is required for the public
- * CMS datasets, but a proxy keeps caching/rate-limiting server-side. For
- * now this always returns the mock — swapping in a real adapter later
- * requires no changes to callers.
+ * CarePath is a backend-less, fully local/offline app — this adapter never
+ * calls a live network API. The mock is the permanent local-data provider,
+ * not a temporary stand-in for one. It can be upgraded later to a real
+ * bundled dataset (the CMS Provider Data Catalog / Hospital Price
+ * Transparency data is bulk-downloadable as CSV/JSON and could back a
+ * periodically-refreshed static snapshot) behind this same `CmsAdapter`
+ * interface, with no changes required to callers — but never to a live API
+ * call, which would reintroduce the network dependency this architecture
+ * exists to avoid.
  */
 export function getCmsAdapter(): CmsAdapter {
   if (!cached) cached = new MockCmsAdapter()

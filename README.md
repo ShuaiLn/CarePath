@@ -19,11 +19,12 @@ npm install
 npm run dev       # starts the dev server, prints a local URL
 ```
 
-No API keys are required to run the app — every external integration (LLM, Google
-Places, CMS pricing/quality data, RxNorm/DailyMed) falls back to a deterministic
-local mock automatically whenever a real backend/key isn't configured. The LLM
-adapter now always attempts a real backend call first (see "Adapters" below); the
-others still always use their mock.
+No API keys are required to run the app, and there is no backend of any kind —
+CarePath is a fully local/offline, backend-less static SPA. The LLM adapter
+always attempts a real extraction first, via a locally-running Ollama daemon on
+this machine (see "Ollama local AI setup" below); every other external
+integration (Google Places, CMS pricing/quality data, medication lookups) is
+still always a deterministic local mock.
 
 ## Using the app
 
@@ -56,6 +57,7 @@ npm run typecheck   # tsc project references, no emit
 npm run test        # run the test suite once
 npm run test:watch  # watch mode
 npm run check:no-secrets-in-build  # fails if dist/ contains an API key or server-only env var name
+npm run check:offline-safety       # fails if dist/ contains a non-loopback http(s):// literal
 npm run lint        # oxlint
 ```
 
@@ -67,54 +69,88 @@ src/
   engines/      Deterministic, LLM-independent decision logic:
                   redFlagEngine, scopeEngine, careLevelEngine, careRoutingEngine
   intake/       Progressive follow-up question flow (fieldChecklist, conversationEngine)
-  adapters/     Pluggable external integrations, each with a typed interface + mock:
-                  llm/ (extraction + explanation), places/ (Google Places), cms/
-                  (CMS quality + pricing), medication/ (RxNorm + DailyMed)
+  adapters/     Pluggable external-data interfaces, each with a typed interface +
+                  deterministic mock: llm/ (extraction + explanation, backed by a
+                  local Ollama daemon), places/, cms/ (quality + pricing),
+                  medication/ (places/cms/medication are mock-only by design — see
+                  "Adapters" below)
   summary/      Doctor Visit Summary generation (template-based, not LLM freestyle)
   data/         Dexie (IndexedDB) schema, case repository, export/clear controls
   state/        useCareFlow — orchestrates the end-to-end UI flow
   components/   React UI, organized by screen/feature
 
-api/            Vercel serverless functions — the only place OPENAI_API_KEY is read.
-                  llm/extract.ts is the deployed endpoint; _lib/ holds the request
-                  handler, OpenAI client, schema, and logging it's built from
-                  (tsconfig.api.json is this folder's separate TS project).
-scripts/        Repo maintenance scripts, e.g. checkNoSecretsInBuild.mjs.
+scripts/        Repo maintenance scripts, e.g. checkNoSecretsInBuild.mjs,
+                  checkNoExternalNetworkCalls.mjs.
 ```
 
-## Adapters and API keys
+There is no `api/` directory and no backend of any kind — CarePath is a static SPA.
+"Deployment" is just serving the `vite build` output (e.g. `npm run preview`, or any
+static file server).
+
+## Ollama local AI setup
+
+CarePath's LLM extraction talks directly from the browser to a locally-running
+[Ollama](https://ollama.com) daemon on `127.0.0.1` — there is no CarePath-owned
+backend or proxy, and no API key. This is the only network activity CarePath ever
+performs; everything else (Google Places, CMS data, medication lookups) is a
+deterministic local mock (see "Adapters" below).
+
+1. Install Ollama and pull a model:
+   ```bash
+   ollama pull llama3.2   # or another small instruction-tuned model of your choice
+   ```
+2. **Disable Ollama Cloud before starting the daemon.** Ollama supports
+   cloud-hosted models and a web-search tool that route requests through Ollama's
+   own hosted infrastructure — leaving either enabled would silently reintroduce a
+   cloud dependency even though the daemon itself runs locally. Set
+   `OLLAMA_NO_CLOUD=1` (or whatever the current equivalent setting is — this has
+   changed across Ollama's release history, so check Ollama's own docs) before
+   running:
+   ```bash
+   ollama serve
+   ```
+3. If CarePath's origin differs from Ollama's default-allowed origins, set
+   `OLLAMA_ORIGINS` so Ollama accepts the browser's requests (Ollama allows
+   localhost by default). A CORS misconfiguration fails safe — the app falls back
+   to the offline mock — but shows a distinguishable console warning so it's not
+   confused with Ollama simply being stopped.
+4. Optional `.env.local` overrides:
+   ```
+   VITE_OLLAMA_BASE_URL=http://127.0.0.1:11434   # must be a loopback address — see below
+   VITE_OLLAMA_MODEL=llama3.2
+   ```
+
+**Loopback-only, enforced at runtime, not just by convention:** `VITE_OLLAMA_BASE_URL`
+is a client-readable, user-editable setting, so nothing at the type level stops it
+from being pointed at a remote host. `LocalLlmAdapter` validates the configured
+hostname against an explicit loopback allowlist (`127.0.0.1`, `localhost`, `::1`)
+before ever attempting a request (`src/adapters/llm/loopbackGuard.ts`); a
+non-loopback value is rejected at runtime and falls back to the offline mock with
+**no request ever sent** — identical behavior to Ollama simply not running.
+
+Any failure — Ollama not running, a non-loopback base URL, the model not pulled,
+a timeout, or malformed/invalid output — falls back to the deterministic offline
+mock automatically; the app never blocks or errors when Ollama isn't available.
+Care-level explanation intentionally stays a fixed, deterministic template (never
+an LLM call) — see `docs/CarePath_AI_Plan.md` Section 12 and
+`LocalLlmAdapter.explainCareLevel`'s doc comment
+(`src/adapters/llm/localLlmAdapter.ts`) for why.
+
+## Adapters
 
 Every external dependency (LLM, Google Places, CMS data, medication lookups) sits
-behind a small adapter interface with a deterministic mock implementation. API keys
-never live in browser code — external services are only ever reached through a
-backend/serverless proxy (see [docs/CarePath_AI_Plan.md](docs/CarePath_AI_Plan.md)
-Section 12).
+behind a small adapter interface with a deterministic mock implementation.
 
-**LLM extraction (implemented):** `src/adapters/llm/index.ts` always calls the
-backend at `/api/llm/extract` (a same-origin relative path by default — set the
-optional `VITE_API_BASE_URL` only if the frontend and backend are ever deployed to
-separate origins). Any failure — no backend deployed, missing server-side key,
-network error, timeout, or a malformed/invalid response — falls back to the
-deterministic offline mock automatically; the app never blocks or errors on a
-missing key. Care-level explanation intentionally stays a fixed, deterministic
-template (not an LLM call) — see `docs/CarePath_AI_Plan.md` Section 12 and
-`RemoteLlmAdapter.explainCareLevel`'s doc comment (`src/adapters/llm/remoteLlmAdapter.ts`)
-for why.
+**LLM extraction (implemented):** see "Ollama local AI setup" above.
 
-To run the real backend locally (e.g. via `vercel dev`), create a `.env.local` with:
-
-```
-OPENAI_API_KEY=sk-...           # server-only — never prefix with VITE_
-OPENAI_EXTRACTION_MODEL=...     # optional override; see api/_lib/openaiClient.ts
-```
-
-Without `OPENAI_API_KEY` set, `/api/llm/extract` returns 503 and the app
-transparently uses the offline mock — this is expected, not an error.
-
-**Places / CMS / Medication (not yet implemented):** these adapters still always
-return their mock — no real backend or env var is wired up for them yet. Swapping
-them in later requires no changes to their callers, following the same pattern as
-the LLM adapter above.
+**Places / CMS / Medication:** these adapters always return their mock, and — unlike
+the LLM adapter — that's the permanent, intended state for at least Places, not a
+placeholder awaiting a live integration: live facility search has no true offline
+equivalent. Medication and CMS data could honestly be upgraded to a real *bundled*
+dataset later (both publish bulk-downloadable data), but never to a live network
+call — see `docs/CarePath_AI_Plan.md` Section 12 and each adapter's `index.ts` doc
+comment. Swapping in a bundled dataset later requires no changes to callers,
+following the same adapter-interface pattern as the LLM adapter above.
 
 ## Safety architecture
 

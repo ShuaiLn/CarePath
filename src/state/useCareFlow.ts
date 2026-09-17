@@ -46,7 +46,7 @@ export function useCareFlow() {
   const [isThinking, setIsThinking] = useState(false)
   const [pendingQuestionId, setPendingQuestionId] = useState<IntakeQuestionId | 'initial'>('initial')
   const [readyForConfirmation, setReadyForConfirmation] = useState(false)
-  const [lastExtractionMode, setLastExtractionMode] = useState<'remote' | 'local-fallback' | null>(null)
+  const [lastExtractionMode, setLastExtractionMode] = useState<'local-llm' | 'local-fallback' | null>(null)
 
   const askedIdsRef = useRef<Set<IntakeQuestionId>>(new Set())
   const clarificationAttemptsRef = useRef<Record<string, number>>({})

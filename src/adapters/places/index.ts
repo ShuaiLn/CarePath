@@ -6,12 +6,16 @@ export type { PlacesAdapter, FacilitySearchQuery } from './types'
 let cached: PlacesAdapter | null = null
 
 /**
- * Factory for the Places adapter. A real Google Places integration would
- * go through a backend proxy (see the LLM adapter for the pattern: a
- * shared, optional VITE_API_BASE_URL plus a same-origin `/api/*` route —
- * docs/CarePath_AI_Plan.md Section 12); until that's wired up, this always
- * returns the deterministic mock so facility search keeps working with no
- * API key configured.
+ * Factory for the Places adapter. CarePath is a backend-less, fully
+ * local/offline app — this adapter never calls a live network API, and the
+ * mock is a permanent, honestly-labeled placeholder rather than a temporary
+ * stand-in. Live facility search (open-now status, real-time distance,
+ * current ratings) has no true offline equivalent, so unlike Medication/CMS
+ * there's no "real bundled dataset" upgrade path that fully replaces it — a
+ * future enhancement could bundle a static regional facility directory with
+ * an explicit "as of <date>, verify before visiting" disclaimer, but that is
+ * a materially different, clearly-labeled feature, never presented as live
+ * search.
  */
 export function getPlacesAdapter(): PlacesAdapter {
   if (!cached) cached = new MockPlacesAdapter()

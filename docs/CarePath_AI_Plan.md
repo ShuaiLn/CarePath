@@ -717,27 +717,69 @@ questioning, and plain-language explanation — never final safety-relevant deci
 always produced by deterministic rules and a structured risk engine operating on extracted
 factors.
 
-### Browser / backend split
+### Browser-only architecture (revised — no backend, of any kind)
 
 ```
-Browser
+Browser (this device only)
 │
 ├── IndexedDB
 │   health history
 │   assessments
 │
-└── Backend / Serverless
-    ├── AI
-    ├── Google Places
-    ├── CMS
-    ├── pricing
-    └── medication APIs
+├── LocalLlmAdapter ──(loopback-only)──> Ollama daemon (127.0.0.1, this device)
+│
+└── Places / CMS / Medication adapters
+    deterministic local mocks — Places is a permanent, honestly-labeled
+    placeholder; CMS/Medication could later be upgraded to a real
+    *bundled* static dataset behind the same interface, never a live call
 ```
 
-Health history is local-first, but the app is never structured as "Browser → Everything." AI
-provider keys and Google Maps private API credentials must never live client-side — a
-backend/serverless layer proxies all external API calls (AI, Google Places, CMS, pricing,
-medication APIs) so provider keys and Maps credentials stay server-side and properly restricted.
+**Revised from an earlier version of this document**, which specified a
+backend/serverless layer proxying every external API call so that AI provider keys
+and Google Maps credentials never lived client-side. That constraint no longer
+applies: CarePath ships no cloud AI integration, so there is no provider key to
+protect, and there is no CarePath-owned backend or serverless platform anywhere in
+the stack — production "deployment" is simply serving the static build output.
+
+The one exception to "everything stays on this device" is CarePath's own LLM
+extraction call, which is still a network request — but it never leaves the
+device: `LocalLlmAdapter` talks directly to a locally-running
+[Ollama](https://ollama.com) daemon over loopback HTTP, no API key. The base URL is
+validated against an explicit loopback allowlist (`127.0.0.1`, `localhost`, `::1`)
+before any request is attempted; a misconfigured non-loopback URL is refused at
+runtime, identical to Ollama being unreachable — see `src/adapters/llm/loopbackGuard.ts`.
+**Ollama Cloud (cloud-hosted models, the hosted web-search tool) must be disabled**
+(`OLLAMA_NO_CLOUD=1` or the current equivalent — verify against Ollama's docs, this
+has changed across releases) — leaving it enabled would silently reintroduce a
+cloud dependency even though the daemon itself runs locally.
+
+Google Places, CMS, and medication data have no live integration at all (not even a
+proxied one) — see "Places / CMS / Medication" below.
+
+### Places / CMS / Medication (revised — no live network integration planned)
+
+An earlier version of this document planned live integrations for facility search
+(Google Places), facility quality/pricing (CMS), and medication data (RxNorm +
+DailyMed), each reached through the backend/serverless proxy described above. With
+that proxy gone, those plans are revised, not simply deferred:
+
+- **Places (facility search): mock stays permanent.** Live facility search — open-now
+  status, real-time distance, current ratings — has no true offline equivalent.
+  `MockPlacesAdapter` is intended to remain a permanent, honestly-labeled
+  placeholder, not a temporary stand-in awaiting a real integration. An optional,
+  materially-different future enhancement could bundle a static regional facility
+  directory with an explicit "as of &lt;date&gt;, verify before visiting" disclaimer —
+  never presented as live search.
+- **CMS (quality/pricing) and Medication: a real *bundled* dataset is honestly
+  feasible.** The CMS Provider Data Catalog / Hospital Price Transparency data and
+  RxNorm + DailyMed data are all bulk-downloadable. A periodically-refreshed,
+  curated local snapshot (JSON/SQLite, shipped with the app) could replace each
+  mock with real (if not real-time) data behind the same adapter interface, with no
+  changes required to callers. This is a real, out-of-scope-for-now upgrade path —
+  not a live API call, which would reintroduce exactly the network dependency this
+  architecture exists to avoid.
+
+See `TODO.md` for the current phase-by-phase status of this reframing.
 
 ### MVP storage: IndexedDB + Dexie
 

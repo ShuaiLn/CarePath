@@ -16,9 +16,6 @@ coverage/
 !.env.*.example
 *.local
 
-# Deployment metadata
-.vercel/
-
 # Logs
 logs/
 *.log*

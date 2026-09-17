@@ -6,10 +6,14 @@ export type { MedicationAdapter } from './types'
 let cached: MedicationAdapter | null = null
 
 /**
- * A real implementation would call RxNorm + DailyMed through a backend
- * proxy (see the LLM adapter for the pattern: a shared, optional
- * VITE_API_BASE_URL plus a same-origin `/api/*` route — docs/CarePath_AI_Plan.md
- * Section 12). Until then, the mock keeps this feature usable offline.
+ * CarePath is a backend-less, fully local/offline app — this adapter never
+ * calls a live network API. The mock is the permanent local-data provider,
+ * not a temporary stand-in for one. It can be upgraded later to a real
+ * bundled dataset (RxNorm/DailyMed both publish bulk-downloadable data that
+ * could back a curated local JSON/SQLite snapshot) behind this same
+ * `MedicationAdapter` interface, with no changes required to callers — but
+ * never to a live API call, which would reintroduce the network dependency
+ * this architecture exists to avoid.
  */
 export function getMedicationAdapter(): MedicationAdapter {
   if (!cached) cached = new MockMedicationAdapter()
